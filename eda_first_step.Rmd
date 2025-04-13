@@ -1,0 +1,170 @@
+---
+title: "EDA_final_project"
+output: html_document
+date: "2025-04-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Посмотрим на датасет
+
+```{r}
+# Установка нужных пакетов
+packages <- c("ggplot2", "dplyr", "tidyr", "corrplot", "GGally", "gridExtra", "reshape2")
+installed <- rownames(installed.packages())
+to_install <- packages[!(packages %in% installed)]
+if(length(to_install)) install.packages(to_install)
+lapply(packages, library, character.only = TRUE)
+
+# Загрузка данных
+df <- read.csv("bar_pass_prediction.csv")
+
+# Первичный осмотр
+str(df)
+summary(df)
+head(df)
+
+# Проверка на пропущенные значения
+colSums(is.na(df))
+
+# Распределения всех числовых признаков
+
+# Отображаем все графики (в виде сетки)
+do.call(grid.arrange, c(dist_plots, ncol = 2))
+
+# Анализ распределения таргета
+target <- "pass_bar"  
+
+
+
+```
+```{r}
+
+#Посмотрим на распредления числовых переменных
+numeric_cols <- names(df)[sapply(df, is.numeric)]
+
+dist_plots <- lapply(numeric_cols, function(col) {
+  ggplot(df, aes(x = .data[[col]])) +
+    geom_histogram(bins = 30, fill = "#69b3a2", color = "white") +
+    theme_minimal() +
+    labs(
+      title = paste("Distribution of", col),
+      x = col,
+      y = "Count"
+    )
+})
+for (plot in dist_plots) {
+  print(plot)
+}
+
+```
+```{r}
+#посмотрим на распределения таргета с выбросами
+ggplot(df, aes_string(x = target)) +
+  geom_histogram(bins = 30, fill = "#ff7f0e", color = "white") +
+  theme_minimal() +
+  labs(title = "Target Distribution (with outliers)")
+```
+```{r}
+#Теперь уберем выбросы и посмотрим на распределения таргета
+Q1 <- quantile(df[[target]], 0.25)
+Q3 <- quantile(df[[target]], 0.75)
+IQR <- Q3 - Q1
+lower <- Q1 - 1.5 * IQR
+upper <- Q3 + 1.5 * IQR
+
+df_clean <- df %>% filter(.data[[target]] >= lower & .data[[target]] <= upper)
+
+# Гистограмма таргета без выбросов
+ggplot(df_clean, aes_string(x = target)) +
+  geom_histogram(bins = 30, fill = "#2ca02c", color = "white") +
+  theme_minimal() +
+  labs(title = "Target Distribution (without outliers)")
+```
+```{r}
+#Удалим пропуски и посмотрим на распределение таргета
+df_clean_no_NA <- df[!is.na(df$pass_bar), ]
+ggplot(df_clean_no_NA, aes_string(x = target)) +
+  geom_histogram(bins = 30, fill = "#69b3a2", color = "white") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of Target (without NAs)",
+    x = "Target",
+    y = "Count"
+  )
+```
+```{r}
+#посмотрим на корреляцию признаков между собой
+library(corrplot)
+numeric_df <- df[, sapply(df, is.numeric)]
+
+
+numeric_df <- na.omit(numeric_df)
+
+
+cor_matrix <- cor(numeric_df)
+
+
+
+corrplot(cor_matrix, method = "color", type = "upper",
+         col = colorRampPalette(c("blue", "white", "red"))(200),
+         tl.col = "black", tl.srt = 45)
+```
+
+```{r}
+#Отобразим получше
+library(reshape2)
+library(ggplot2)
+cor_df <- melt(cor_matrix)
+
+ggplot(cor_df, aes(Var1, Var2, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                       midpoint = 0, limit = c(-1, 1), space = "Lab",
+                       name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  coord_fixed() +
+  labs(title = "Correlation Matrix", x = "", y = "")
+```
+```{r}
+
+
+#Посчитаем t-статистики для числовых признаков
+categorical_cols <- names(df)[sapply(df, is.numeric)]
+
+# Вычисляем t-статистики
+t_stats <- sapply(numeric_cols, function(col) {
+
+  temp_df <- df[!is.na(df[[col]]), ]
+  
+
+  t.test(temp_df[[col]] ~ temp_df$bar_pass)$statistic
+})
+
+
+cat("T-статистики по числовым переменным:\n")
+print(t_stats)
+
+```
+
