@@ -17,6 +17,7 @@ str(df)
 summary(df)
 ```
 
+Проверим наличие дубликатов
 ```{r}
 idsUnique <- n_distinct(df$ID)
 idsTotal <- nrow(df)
@@ -26,8 +27,9 @@ print(paste('Number of duplicate IDs:', idd))
 
 ```
 
-
+Сравним количество прошедших и не прошедших экзамен
 ```{r}
+
 na_counts_base <- lapply(df, function(x) sum(is.na(x)))
 
 print(na_counts_base)
@@ -156,7 +158,9 @@ print(t_stats)
 
 ```
 
+Теперь рассмотрим столбцы датасета, чтобы как-нибдуь заполнить/удалить пропуски, а так же разобраться с данными, назначение которых не подписанао на каггле
 
+Пол
 ```{r}
 table(df$gender)
 ```
@@ -180,11 +184,17 @@ df <- df %>%
 ```
 
 
-
+lsat
 ```{r}
 df$lsat <- as.integer(df$lsat)
 summary(df$lsat)
 ```
+
+```{r}
+df %>% count(lsat)
+```
+
+Почему-то в исходном датасете данные ранжируются от 11 до 486 хотя LSAT сам по себе идет от 120 до 180. Почитав документ о датасете, я нашел, что данные линейно преобразованы по формуле ((LSAT - 120)/60)*37 + 11 (округленно). Можно обрабатывать введенное пользователем значение по этой формуле, чтобы использовать в предсказании.
 
 ```{r}
 numeric_df <- df %>% 
@@ -209,7 +219,7 @@ ggplot(cor_matrix_long, aes(x = var1, y = var2, fill = correlation)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-
+Посмотрим корреляцию переменных к таргету
 ```{r}
 pass_bar_corr <- cor(numeric_df, use = "complete.obs")["pass_bar", ]
 
@@ -219,7 +229,7 @@ pass_bar_corr[order(-abs(pass_bar_corr))]
 
 
 
-
+посмотрим столбцы, коррелирующие с полом
 ```{r}
 gender_corr <- cor(numeric_df, use = "complete.obs")["gender", ]
 
@@ -227,12 +237,13 @@ gender_corr[order(-abs(gender_corr))]
 
 ```
 
+удалим совпадающие столбцы
 ```{r}
 df <- df %>% 
   select(-sex, -male)
 ```
 
-
+Теперь расссмотрим столбцы про расы
 ```{r}
 df_race <- df %>% select(race, race1, race2, other, asian, black, hisp)
 head(df_race)
@@ -248,7 +259,7 @@ unique(df_race$race)
 unique(df_race$race1)
 unique(df_race$race2)
 ```
-
+Пропуски есть только в race, остальные же столбцы каким-либо образом описывают расу
 
 ```{r}
 # Анализ black студентов
@@ -257,7 +268,7 @@ cat("black students in column black:", sum(df_race$black, na.rm = TRUE), "\n")
 cat("Number of black students in one column and not the other:", 
     sum(df_race$black == 1 & df_race$race1 != "black", na.rm = TRUE), "\n")
 ```
-
+Расхождений между race1 и black нет
 ```{r}
 # Анализ hisp студентов
 cat("hisp students in race1:", sum(df_race$race1 == "hisp", na.rm = TRUE), "\n")
@@ -265,7 +276,8 @@ cat("hisp students in column hisp:", sum(df_race$hisp, na.rm = TRUE), "\n")
 cat("Number of hisp students in one column and not the other:",
     sum(df_race$hisp == 1 & df_race$race1 != "hisp", na.rm = TRUE), "\n")
 ```
-Будем опираться на колонку race1
+
+Есть расхождения в 105 строк, однако в самой колонке в целом намного меньше значений, чем в race1, так что будем опираться на колонку race1
 
 ```{r}
 # Анализ asian студентов
@@ -274,13 +286,14 @@ cat("asian students in column asian:", sum(df_race$asian, na.rm = TRUE), "\n")
 cat("Number of asian students in one column and not the other:",
     sum(df_race$asian == 1 & df_race$race1 != "asian", na.rm = TRUE), "\n")
 ```
+Расхождений тоже нет
 
 ```{r}
 table(df$race1)
 ```
 
 
-
+Посмотрим распределения прохождения экзамена по расам
 ```{r}
 race_counts <- df %>%
   mutate(race1 = ifelse(is.na(race1), "unknown", race1)) %>%
@@ -324,7 +337,7 @@ print(race_counts)
 ```
 
 
-
+Заполним пропуски значением white и сделаем one-hot encoding рас, удалив при этом изначальные столбцы
 ```{r}
 sum(is.na(df$race1))
 df <- df %>% mutate(race1 = ifelse(is.na(race1), "white", race1))
@@ -344,7 +357,7 @@ df <- df %>% select(-race1)
 ```
 
 
-
+Посмотрим, какие столбцы сильно коррелируют с другими
 ```{r}
 corrmat <- df %>% 
   select(where(is.numeric)) %>%
@@ -364,6 +377,8 @@ print(to_drop)
 df <- df %>% select(-parttime, -gpa, -bar_passed)
 ```
 
+
+Теперь рассмотрим децили и zfygpa/zgpa
 ```{r}
 library(corrplot)
 df_dec <- df %>% select(decile1b, decile1, zfygpa, decile3, zgpa)
@@ -385,7 +400,7 @@ corrplot(corrmat,
 ```
 
 
-zgpa соотносится с decile3 и zfygpa соотносится к decile1/1b. Скорее всего zga и zfygpa - это gpa в юридических школах. zfy = z first year и следовательно decile1 = дециль рейтинга в 1 год обучения, decile3- дециль рейтинга в третий год обучения
+zgpa соотносится с decile3 и zfygpa соотносится к decile1/1b. Скорее всего zga и zfygpa - это gpa в юридических школах. zfy = z first year и следовательно decile1 = дециль рейтинга в 1 год обучения, decile3 - дециль рейтинга в третий год обучения
 
 ```{r}
 corrmat_df <- as.data.frame(corrmat)
@@ -397,6 +412,7 @@ corrmat_df %>% arrange(desc(decile3)) %>% select(decile3)
 colSums(is.na(df_dec))
 ```
 
+Заполним пропуски в decile1 и decile3 на основе zfygpa и zgpa
 ```{r}
 df %>% filter(is.na(decile1) & !is.na(decile1b)) %>% nrow()
 ```
@@ -524,6 +540,64 @@ df_dec <- df %>% select(decile1, zfygpa, decile3, zgpa)
 colSums(is.na(df_dec))
 ```
 
+```{r}
+df %>% count(decile1)
+```
+```{r}
+df %>% count(decile3)
+```
+
+```{r}
+ggplot(df, aes(x = factor(decile1, levels = 1:10))) +
+  geom_bar(fill = "steelblue", color = "black") +
+  labs(title = "Distribution of First-Year Law School Decile Ranks",
+       x = "Decile Rank (1 = Bottom 10%, 10 = Top 10%)",
+       y = "Number of Students") +
+  scale_x_discrete(drop = FALSE) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(df, aes(x = factor(decile3, levels = 1:10))) +
+  geom_bar(fill = "steelblue", color = "black") +
+  labs(title = "Distribution of Third-Year Law School (cumulative) Decile Ranks",
+       x = "Decile Rank (1 = Bottom 10%, 10 = Top 10%)",
+       y = "Number of Students") +
+  scale_x_discrete(drop = FALSE) +
+  theme_minimal()
+```
+
+```{r}
+df %>% filter(is.na(decile1)) %>% count()
+df %>% filter(is.na(decile3)) %>% count()
+df %>% filter(is.na(decile1) & is.na(decile3)) %>% count()
+df %>% filter((is.na(decile1) | is.na(decile3)) & pass_bar == 0) %>% count()
+```
+
+Слишком много строк имеют пропуски сразу в decile1 и decile3, а пропуски через zfygpa и zgpa уже были заполнены, так что придется удалить пропущенные значения
+
+```{r}
+df <- df %>% 
+  filter(!(is.na(decile1) & is.na(decile3)))
+```
+
+
+```{r}
+df %>% filter(is.na(decile1) & is.na(decile3)) %>% count()
+```
+```{r}
+df %>% count(decile3)
+```
+Заполним пропуски в decile1 на основе decile3 и обратно
+
+```{r}
+df <- df %>%
+  mutate(
+    decile1 = ifelse(is.na(decile1), decile3, decile1),
+    decile3 = ifelse(is.na(decile3), decile1, decile3)
+  )
+```
+
 
 ```{r}
 df <- df %>% select(-zfygpa, -zgpa)
@@ -547,7 +621,7 @@ colnames(df)
 df %>% select('age', 'DOB_yr') %>% head(5)
 ```
 
-???
+Интересно, что age имеет отрицательные значения
 
 ```{r}
 df_age <- df %>% select(DOB_yr, age, pass_bar)
@@ -557,7 +631,7 @@ summary(df_age)
 
 
 ```{r}
-corrmat <- cor(df_age, use = "complete.obs") # use = "complete.obs" для пропущенных значений
+corrmat <- cor(df_age, use = "complete.obs")
 ggplot(melt(corrmat), aes(Var1, Var2, fill = value)) + 
   geom_tile() +
   scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
@@ -575,8 +649,24 @@ ggplot(melt(corrmat), aes(Var1, Var2, fill = value)) +
 corrmat[, "pass_bar"]
 ```
 
-вроде и есть маленькая корреляция, но значения в самих строках все равно странные
 
+Вроде и есть маленькая корреляция, но значения в age все равно странные. Учитывая, что данные для датасета собирались в 1991-1997 годах, поменяем столбец age на разницу 1991 и DOB_yr, так как DOB_yr представляет собой год рождения (19xx)
+
+```{r}
+df <- df %>%
+  mutate(age = 91 - DOB_yr)
+```
+
+
+```{r}
+df <- df %>% select(-DOB_yr)
+```
+
+```{r}
+df %>% count(age)
+```
+
+cluster
 ```{r}
 corrmat_cluster <- cor(df %>% select(cluster, pass_bar), use = "complete.obs")
 ggplot(melt(corrmat_cluster), aes(Var1, Var2, fill = value)) + 
@@ -593,6 +683,7 @@ ggplot(melt(corrmat_cluster), aes(Var1, Var2, fill = value)) +
 corrmat_cluster[, "pass_bar"]
 ```
 
+Практически не коррелируется, к тому же в документе нет объяснения значениям, так что удалим
 ```{r}
 df <- df %>% select(-cluster)
 ```
@@ -622,7 +713,7 @@ sum(is.na(df$tier))
 
 count(df, tier)
 ```
-
+Посмотрим, сколько процентов с разными значениями tier прошли экзамен
 ```{r}
 per_passed_graph <- function(df, value) {
   df_graph <- df %>%
@@ -643,6 +734,9 @@ per_passed_graph <- function(df, value) {
 
 per_passed_graph(df, 'tier')
 
+```
+
+```{r}
 # Замена пропущенных значений в tier на 3.0
 df$tier[is.na(df$tier)] <- 3.0
 ```
@@ -682,7 +776,7 @@ df$grad[df$grad == "O"] <- "X"
 count(df, fulltime)
 ```
 
-по идее фуллтайм = 1 это что человек на фуллтайм обучении, так что для логики поменяем 2 на 0
+фуллтайм = 1 это что человек на фуллтайм обучении, так что для логики поменяем 2 на 0
 ```{r}
 df$fulltime[is.na(df$fulltime)] <- 1
 df$grad[df$grad == 2] <- 0
@@ -699,11 +793,12 @@ df <- df %>% select(-dnn_bar_pass_prediction)
 ```{r}
 count(df, other)
 ```
-???
+Никакой информации по столбцу нет в документе или каггле, так что удалим
 ```{r}
 df <- df %>% select(-other)
 ```
 
+Посмотрим на столбцы индексов
 ```{r}
 df %>% select(indxgrp, indxgrp2, index6040) %>% head(10)
 ```
@@ -719,9 +814,28 @@ count(indx_df, indxgrp2)
 
 https://archive.lawschooltransparency.com/reform/projects/investigations/2015/documents/NLBPS.pdf
 
-изучив данный отчет, я нашел то, что indxgrp представляет собой переведенную по какой-то шкале комбинацию LSAT и undergrad gpa. Стоит пока оставить, но нужно понять, как считаются сами промежутки, чтобы это было понятно пользователю
+изучив данный отчет, я нашел то, что indxgrp представляет собой переведенную по какой-то шкале комбинацию LSAT и undergrad gpa. Стоит пока оставить, но нужно понять, как считаются сами промежутки, чтобы это было понятно пользователю. Посмотрим на значения ugpa
 
 
+```{r}
+df %>% count(ugpa)
+```
+Тут никак не отформатированны значения, в отличие от LSAT, но это уже было рассмотрено.
+
+index6040 вероятнее означает, что lsat весит 60%, а ugpa - 40%. Допустим, пользователь вводит значения ugpa и lsat в нормальных, неотформатированных промежутках.
+
+```{r}
+df %>% filter(index6040 > 500) %>% count(index6040)
+```
+
+```{r}
+df %>% select(ugpa, lsat, index6040) %>% head(10)
+```
+((LSAT - 120)/60)*37 + 11 (округленно) - преобразование lsat
+
+В итоге, index6040 можно считать по формуле 1000 * ( 0.6 * (LSAT - 120)/60 + 0.4 * (ugpa / 4)), где lsat не отформатирован
+
+теперь рассмотрим fam_inc
 ```{r}
 income_df <- df %>% select(fam_inc, pass_bar)
 ```
@@ -730,7 +844,7 @@ income_df <- df %>% select(fam_inc, pass_bar)
 count(income_df, fam_inc)
 ```
 
-столбец представляет собой социоэкономический статус семьи, разделенный на 5 уровней. Заполним пропуски 4-м уровнем как самым распространенным
+столбец представляет собой социоэкономический статус семьи, разделенный на 5 уровней (5-наивысший). Заполним пропуски 4-м уровнем как самым распространенным
 
 ```{r}
 df$fam_inc[is.na(df$fam_inc)] <- 4
@@ -740,3 +854,43 @@ df$fam_inc[is.na(df$fam_inc)] <- 4
 colSums(is.na(df))
 ```
 
+```{r}
+df <- df %>% filter(!is.na(age))
+```
+
+```{r}
+df <- df %>% select(-ID)
+```
+
+Удалим indxgrp и переименуем indxgrp2, так как в нем немного больше промежутков
+```{r}
+df <- df %>% select(-indxgrp)
+```
+
+```{r}
+df <- df %>% rename(indxgrp = indxgrp2)
+```
+
+
+```{r}
+colSums(is.na(df))
+```
+
+
+Описание оставшихся столбцов:
+
+
+decile3 - кумулятивный дециль в конце третьего (последнего) года обучения. 1 = 10%, 2=11-20% и так далее, где 10 - это топ 10% от рейтинга (то есть 91-100% в топе)
+decile1 - аналогично, но за первый год обучения
+lsat - значения LSAT, отформатированные по формуле ((LSAT - 120)/60)*37 + 11 (округленно)
+ugpa - undergraduate gpa студента
+grad - выпустился ли студент из юридической школы
+fulltime - было ли обучение очным/фуллтайм
+fam_inc - диапазон дохода семьи (допустим 1 = < 30000, 2 = 30000 - 60000, 3 = 60000 - 90000, 4 = 90000 - 120000, 5 = > 120000) в долларах
+age - возраст студента
+gender - пол
+pass_bar - прошел ли студент экзамен (на получение юридической лицензии) - таргет
+tier - уровень юридической школы (1 - топ-уровень), идет до 4-х (ниже среднего), 5 - неизвестные региональные юридические школы, 6 - неаккредитованные программы. Обычно уровень школы можно найти в интернете
+index6040 - композитный индекс по lsat и ugpa с весом 60 у lsat и 40 у ugpa (1000 * ( 0.6 * (LSAT - 120)/60 + 0.4 * (ugpa / 4)), где lsat не отформатирован)
+indxgrp - промежуток index6040
+race1... - раса (1 в одном и 0 в остальных столбцах)
