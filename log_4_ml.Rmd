@@ -1,0 +1,127 @@
+Описание данных:
+decile3 - кумулятивный дециль в конце третьего (последнего) года обучения. 1 = 10%, 2=11-20% и так далее, где 10 - это топ 10% от рейтинга (то есть 91-100% в топе)
+decile1 - аналогично, но за первый год обучения
+lsat - значения LSAT, отформатированные по формуле ((LSAT - 120)/60)*37 + 11 (округленно)
+ugpa - undergraduate gpa студента
+grad - выпустился ли студент из юридической школы
+fulltime - было ли обучение очным/фуллтайм
+fam_inc - диапазон дохода семьи (допустим 1 = < 30000, 2 = 30000 - 60000, 3 = 60000 - 90000, 4 = 90000 - 120000, 5 = > 120000) в долларах
+age - возраст студента
+gender - пол
+pass_bar - прошел ли студент экзамен (на получение юридической лицензии) - таргет
+tier - уровень юридической школы (1 - топ-уровень), идет до 4-х (ниже среднего), 5 - неизвестные региональные юридические школы, 6 - неаккредитованные программы. Обычно уровень школы можно найти в интернете
+index6040 - композитный индекс по lsat и ugpa с весом 60 у lsat и 40 у ugpa (1000 * ( 0.6 * (LSAT - 120)/60 + 0.4 * (ugpa / 4)), где lsat не отформатирован)
+indxgrp - промежуток index6040
+race1... - раса (1 в одном и 0 в остальных столбцах)
+
+```{r}
+colSums(is.na(df))
+```
+
+
+```{r}
+df
+```
+
+```{r}
+# Загрузка библиотек
+library(caret)
+library(dplyr)
+
+# Предполагаем, что df загружен и не содержит NA
+# Преобразование типов данных
+df <- df %>%
+  mutate(
+    grad     = factor(grad, levels = c("X", "Y")),
+    fulltime = factor(fulltime, levels = c(0, 1)),
+    fam_inc  = factor(fam_inc),
+    gender   = factor(gender, levels = c(0, 1)),
+    tier     = factor(tier),
+    pass_bar = factor(pass_bar, levels = c(0, 1), labels = c("no", "yes"))
+  )
+
+# Функция для WAPE
+wapeSummary <- function(data, lev = NULL, model = NULL) {
+  obs  <- ifelse(data$obs == lev[2], 1, 0)
+  pred <- data[, lev[2]]
+  c(WAPE = sum(abs(obs - pred)) / sum(obs))
+}
+
+# Настройки кросс-валидации (5-fold CV)
+set.seed(42)
+ctrl <- trainControl(
+  method          = "cv",
+  number          = 5,
+  classProbs      = TRUE,
+  summaryFunction = wapeSummary,
+  savePredictions = "final",
+  verboseIter     = TRUE
+)
+
+# Расчёт весов классов
+tbl <- table(df$pass_bar)
+class_weights <- c(
+  no  = as.numeric(tbl["yes"]) / sum(tbl),
+  yes = as.numeric(tbl["no"])  / sum(tbl)
+)
+
+# Обучение Random Forest через caret
+model_rf <- train(
+  pass_bar ~ decile3 + decile1 + lsat + ugpa + grad + fulltime + fam_inc + age + gender + tier + index6040,
+  data       = df,
+  method     = "rf",
+  metric     = "WAPE",
+  maximize   = FALSE,
+  trControl  = ctrl,
+  ntree      = 100,
+  classwt    = class_weights
+)
+
+# Результаты CV
+print(model_rf)
+
+# Подготовка тестовых примеров
+test_samples <- data.frame(
+  decile3   = c(5, 8, 2),
+  decile1   = c(4, 9, 3),
+  lsat      = c(40, 48, 20),
+  ugpa      = c(3.2, 3.8, 2.5),
+  grad      = c("Y", "Y", "Y"),
+  fulltime  = c(1, 1, 0),
+  fam_inc   = c(3, 4, 2),
+  age       = c(25, 27, 29),
+  gender    = c(1, 1, 0),
+  tier      = c(2, 1, 4),
+  index6040 = c(680, 840, 460)
+)
+
+# Приведение факторов к тем же уровням и типам
+# Используем as.character для числовых переменных, чтобы сопоставить строковые уровни
+test_samples <- test_samples %>% mutate(
+  grad     = factor(grad, levels = levels(df$grad)),
+  fam_inc  = factor(as.character(fam_inc),  levels = levels(df$fam_inc)),
+  fulltime = factor(as.character(fulltime), levels = c(0, 1)),
+  gender   = factor(gender, levels = c(0,1)),
+  tier     = factor(as.character(tier),     levels = levels(df$tier))
+)
+
+# Предсказание вероятностей и расчёт риска
+probs <- sapply(seq_len(nrow(test_samples)), function(i) {
+  predict(model_rf, test_samples[i, , drop = FALSE], type = "prob")[, "yes"]
+})
+
+preds <- ifelse(probs >= 0.7, "yes", "no")
+risk  <- 1 - probs
+
+# Итоговая таблица результатов
+results <- test_samples %>%
+  mutate(
+    P_pass    = round(probs, 3),
+    Risk_fail = round(risk, 3),
+    Predicted = preds
+  ) %>%
+  arrange(desc(Risk_fail))
+
+print(results)
+```
+
