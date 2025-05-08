@@ -1,0 +1,900 @@
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(corrplot)
+library(GGally)
+library(gridExtra)
+library(reshape2)
+```
+
+
+```{r}
+df = read.csv('bar_pass_prediction.csv')
+```
+
+```{r}
+str(df)
+summary(df)
+```
+
+Проверим наличие дубликатов
+```{r}
+idsUnique <- n_distinct(df$ID)
+idsTotal <- nrow(df)
+idd <- idsTotal - idsUnique
+
+print(paste('Number of duplicate IDs:', idd))
+
+```
+
+Сравним количество прошедших и не прошедших экзамен
+```{r}
+
+na_counts_base <- lapply(df, function(x) sum(is.na(x)))
+
+print(na_counts_base)
+
+ggplot(df, aes(x = "", fill = factor(pass_bar))) +
+  geom_bar(width = 1) +
+  coord_polar("y", start = 0) +
+  theme_void() +
+  ggtitle("Pass Bar") +
+  scale_fill_discrete(name = "Pass Bar") +
+  geom_text(aes(label = paste0(round(..count../sum(..count..)*100), "%")),
+            stat = "count",
+            position = position_stack(vjust = 0.5))
+
+```
+
+```{r}
+# Анализ распределения таргета
+target <- "pass_bar"  
+
+numeric_cols <- names(df)[sapply(df, is.numeric)]
+
+dist_plots <- lapply(numeric_cols, function(col) {
+  ggplot(df, aes(x = .data[[col]])) +
+    geom_histogram(bins = 30, fill = "#69b3a2", color = "white") +
+    theme_minimal() +
+    labs(
+      title = paste("Distribution of", col),
+      x = col,
+      y = "Count"
+    )
+})
+#Графики показывают распределения фичей и балансы классов, можем увидеть, что некоторые признаки дисбалансированы
+for (plot in dist_plots) {
+  print(plot)
+}
+```
+
+```{r}
+#посмотрим на распределения таргета с выбросами
+ggplot(df, aes_string(x = target)) +
+  geom_histogram(bins = 30, fill = "#ff7f0e", color = "white") +
+  theme_minimal() +
+  labs(title = "Target Distribution (with outliers)")
+```
+
+```{r}
+#Теперь уберем выбросы и посмотрим на распределения таргета
+Q1 <- quantile(df[[target]], 0.25)
+Q3 <- quantile(df[[target]], 0.75)
+IQR <- Q3 - Q1
+lower <- Q1 - 1.5 * IQR
+upper <- Q3 + 1.5 * IQR
+
+df_clean <- df %>% filter(.data[[target]] >= lower & .data[[target]] <= upper)
+
+# Гистограмма таргета без выбросов
+ggplot(df_clean, aes_string(x = target)) +
+  geom_histogram(bins = 30, fill = "#2ca02c", color = "white") +
+  theme_minimal() +
+  labs(title = "Target Distribution (without outliers)")
+```
+
+```{r}
+#Удалим пропуски и посмотрим на распределение таргета
+df_clean_no_NA <- df[!is.na(df$pass_bar), ]
+ggplot(df_clean_no_NA, aes_string(x = target)) +
+  geom_histogram(bins = 30, fill = "#69b3a2", color = "white") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of Target (without NAs)",
+    x = "Target",
+    y = "Count"
+  )
+```
+
+```{r}
+#посмотрим на корреляцию признаков между собой
+numeric_df <- df[, sapply(df, is.numeric)]
+
+
+numeric_df <- na.omit(numeric_df)
+
+
+cor_matrix <- cor(numeric_df)
+
+
+
+corrplot(cor_matrix, method = "color", type = "upper",
+         col = colorRampPalette(c("blue", "white", "red"))(200),
+         tl.col = "black", tl.srt = 45)
+```
+
+```{r}
+#Отобразим получше
+library(reshape2)
+library(ggplot2)
+cor_df <- melt(cor_matrix)
+
+ggplot(cor_df, aes(Var1, Var2, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                       midpoint = 0, limit = c(-1, 1), space = "Lab",
+                       name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  coord_fixed() +
+  labs(title = "Correlation Matrix", x = "", y = "")
+```
+
+```{r}
+#Посчитаем t-статистики для числовых признаков
+categorical_cols <- names(df)[sapply(df, is.numeric)]
+
+# Вычисляем t-статистики
+t_stats <- sapply(numeric_cols, function(col) {
+
+  temp_df <- df[!is.na(df[[col]]), ]
+  
+
+  t.test(temp_df[[col]] ~ temp_df$bar_pass)$statistic
+})
+
+
+cat("T-статистики по числовым переменным:\n")
+print(t_stats)
+
+```
+
+Теперь рассмотрим столбцы датасета, чтобы как-нибдуь заполнить/удалить пропуски, а так же разобраться с данными, назначение которых не подписанао на каггле
+
+Пол
+```{r}
+table(df$gender)
+```
+
+```{r}
+sum(is.na(df$gender))
+
+df <- df %>%
+  mutate(
+    gender = case_when(
+      gender == "male" ~ 1,
+      gender == "female" ~ 0,
+    )
+  )
+```
+
+
+```{r}
+df <- df %>% 
+  filter(!is.na(gender))
+```
+
+
+lsat
+```{r}
+df$lsat <- as.integer(df$lsat)
+summary(df$lsat)
+```
+
+```{r}
+df %>% count(lsat)
+```
+
+Почему-то в исходном датасете данные ранжируются от 11 до 486 хотя LSAT сам по себе идет от 120 до 180. Почитав документ о датасете, я нашел, что данные линейно преобразованы по формуле ((LSAT - 120)/60)*37 + 11 (округленно). Можно обрабатывать введенное пользователем значение по этой формуле, чтобы использовать в предсказании.
+
+```{r}
+numeric_df <- df %>% 
+  select(where(is.numeric))
+
+cor_matrix <- cor(numeric_df)
+cor_matrix
+```
+
+
+```{r}
+cor_matrix_long <- cor_matrix %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "var1") %>%
+  pivot_longer(cols = -var1, names_to = "var2", values_to = "correlation")
+
+ggplot(cor_matrix_long, aes(x = var1, y = var2, fill = correlation)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  labs(title = "Корреляционная матрица") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Посмотрим корреляцию переменных к таргету
+```{r}
+pass_bar_corr <- cor(numeric_df, use = "complete.obs")["pass_bar", ]
+
+pass_bar_corr[order(-abs(pass_bar_corr))]
+```
+
+
+
+
+посмотрим столбцы, коррелирующие с полом
+```{r}
+gender_corr <- cor(numeric_df, use = "complete.obs")["gender", ]
+
+gender_corr[order(-abs(gender_corr))]
+
+```
+
+удалим совпадающие столбцы
+```{r}
+df <- df %>% 
+  select(-sex, -male)
+```
+
+Теперь расссмотрим столбцы про расы
+```{r}
+df_race <- df %>% select(race, race1, race2, other, asian, black, hisp)
+head(df_race)
+```
+
+
+```{r}
+colSums(is.na(df_race))
+
+sum(is.na(df_race$race) & is.na(df_race$race1) & is.na(df_race$race2))
+
+unique(df_race$race)
+unique(df_race$race1)
+unique(df_race$race2)
+```
+Пропуски есть только в race, остальные же столбцы каким-либо образом описывают расу
+
+```{r}
+# Анализ black студентов
+cat("black students in race1:", sum(df_race$race1 == "black", na.rm = TRUE), "\n")
+cat("black students in column black:", sum(df_race$black, na.rm = TRUE), "\n")
+cat("Number of black students in one column and not the other:", 
+    sum(df_race$black == 1 & df_race$race1 != "black", na.rm = TRUE), "\n")
+```
+Расхождений между race1 и black нет
+```{r}
+# Анализ hisp студентов
+cat("hisp students in race1:", sum(df_race$race1 == "hisp", na.rm = TRUE), "\n")
+cat("hisp students in column hisp:", sum(df_race$hisp, na.rm = TRUE), "\n")
+cat("Number of hisp students in one column and not the other:",
+    sum(df_race$hisp == 1 & df_race$race1 != "hisp", na.rm = TRUE), "\n")
+```
+
+Есть расхождения в 105 строк, однако в самой колонке в целом намного меньше значений, чем в race1, так что будем опираться на колонку race1
+
+```{r}
+# Анализ asian студентов
+cat("asian students in race1:", sum(df_race$race1 == "asian", na.rm = TRUE), "\n")
+cat("asian students in column asian:", sum(df_race$asian, na.rm = TRUE), "\n")
+cat("Number of asian students in one column and not the other:",
+    sum(df_race$asian == 1 & df_race$race1 != "asian", na.rm = TRUE), "\n")
+```
+Расхождений тоже нет
+
+```{r}
+table(df$race1)
+```
+
+
+Посмотрим распределения прохождения экзамена по расам
+```{r}
+race_counts <- df %>%
+  mutate(race1 = ifelse(is.na(race1), "unknown", race1)) %>%
+  count(race1) %>%
+  mutate(
+    race = case_when(
+      race1 == "white" ~ "white",
+      race1 == "black" ~ "black",
+      race1 == "hisp" ~ "hisp",
+      race1 == "asian" ~ "asian",
+      race1 == "other" ~ "other",
+      TRUE ~ "unknown"
+    ),
+    `bar takers` = 100 * n / nrow(df),
+    population = case_when(
+      race == "white" ~ 59.3,
+      race == "black" ~ 12.6,
+      race == "hisp" ~ 18.9,
+      race == "asian" ~ 5.9,
+      race == "other" ~ 3.3,
+      TRUE ~ NA
+    )
+  )
+
+race_categories <- c("white", "black", "hisp", "asian", "other", "unknown")
+
+per_pass <- map_dbl(race_categories, ~ {
+  if (.x == "unknown") {
+    100 * sum(is.na(df$race1) & df$pass_bar == 1, na.rm = TRUE) / 
+      sum(is.na(df$race1), na.rm = TRUE)
+  } else {
+    100 * sum(df$race1 == .x & df$pass_bar == 1, na.rm = TRUE) / 
+      sum(df$race1 == .x, na.rm = TRUE)
+  }
+})
+
+race_counts <- race_counts %>%
+  mutate(`percent passed` = per_pass[match(race, race_categories)])
+
+print(race_counts)
+```
+
+
+Заполним пропуски значением white и сделаем one-hot encoding рас, удалив при этом изначальные столбцы
+```{r}
+sum(is.na(df$race1))
+df <- df %>% mutate(race1 = ifelse(is.na(race1), "white", race1))
+
+# One-hot encoding
+library(caret)
+dummy <- dummyVars(~ race1, data = df)
+df_ohe <- predict(dummy, newdata = df) %>% as.data.frame()
+
+df <- df %>% 
+  select(-race1, -black, -hisp, -asian, -race2, -race) %>% 
+  bind_cols(df_ohe)
+```
+
+```{r}
+df <- df %>% select(-race1)
+```
+
+
+Посмотрим, какие столбцы сильно коррелируют с другими
+```{r}
+corrmat <- df %>% 
+  select(where(is.numeric)) %>%
+  cor(use = "complete.obs") %>%
+  abs()
+
+upper <- corrmat
+upper[lower.tri(upper, diag = TRUE)] <- NA
+
+to_drop <- colnames(upper)[apply(upper, 2, function(x) any(x > 0.95, na.rm = TRUE))]
+
+print(to_drop)
+```
+
+Дропнем parttime и gpa, а также bar_passed (который совпадает с pass_bar)
+```{r}
+df <- df %>% select(-parttime, -gpa, -bar_passed)
+```
+
+
+Теперь рассмотрим децили и zfygpa/zgpa
+```{r}
+library(corrplot)
+df_dec <- df %>% select(decile1b, decile1, zfygpa, decile3, zgpa)
+head(df_dec)
+```
+
+```{r}
+corrmat <- cor(df_dec, use = "complete.obs")
+corrplot(corrmat, 
+         method = "color",
+         type = "upper",
+         tl.col = "black",
+         tl.srt = 45,
+         addCoef.col = "black",
+         number.cex = 0.7,
+         mar = c(0,0,1,0),
+         title = "Correlation Matrix")
+
+```
+
+
+zgpa соотносится с decile3 и zfygpa соотносится к decile1/1b. Скорее всего zga и zfygpa - это gpa в юридических школах. zfy = z first year и следовательно decile1 = дециль рейтинга в 1 год обучения, decile3 - дециль рейтинга в третий год обучения
+
+```{r}
+corrmat_df <- as.data.frame(corrmat)
+corrmat_df %>% arrange(desc(decile1)) %>% select(decile1)
+corrmat_df %>% arrange(desc(decile3)) %>% select(decile3)
+```
+
+```{r}
+colSums(is.na(df_dec))
+```
+
+Заполним пропуски в decile1 и decile3 на основе zfygpa и zgpa
+```{r}
+df %>% filter(is.na(decile1) & !is.na(decile1b)) %>% nrow()
+```
+
+```{r}
+df <- df %>% select(-decile1b)
+```
+
+
+```{r}
+df %>% filter(is.na(decile1) & !is.na(zfygpa)) %>% nrow()
+df %>% filter(!is.na(decile1) & is.na(zfygpa)) %>% nrow()
+```
+
+
+```{r}
+df_zfy <- df %>% select(zfygpa, decile1)
+head(df_zfy)
+```
+
+```{r}
+df_zfy %>% filter(is.na(decile1) & !is.na(zfygpa)) %>% head()
+```
+
+```{r}
+condlist <- list()
+for(i in 1:10) {
+  condlist[[i]] <- min(df_zfy$zfygpa[df_zfy$decile1 == i], na.rm = TRUE)
+}
+```
+
+
+```{r}
+condlist
+```
+
+```{r}
+condlist <- lapply(1:10, function(i) {
+  min(df_zfy$zfygpa[df_zfy$decile1 == i], na.rm = TRUE)
+}) %>% unlist()
+
+
+thresholds <- data.frame(
+  decile = 9:1,
+  threshold = (condlist[9:1] + condlist[10:2])/2
+)
+
+
+assign_decile <- function(zfygpa_val) {
+  if(is.na(zfygpa_val)) return(NA)
+  for(i in 1:nrow(thresholds)) {
+    if(zfygpa_val > thresholds$threshold[i]) {
+      return(thresholds$decile[i])
+    }
+  }
+  return(1)
+}
+
+df <- df %>%
+  mutate(decile1 = ifelse(is.na(decile1),
+                         sapply(zfygpa, assign_decile),
+                         decile1))
+```
+
+
+
+
+```{r}
+df_z <- df %>% select(zgpa, decile3)
+head(df_z)
+```
+
+```{r}
+df_z %>% filter(is.na(decile3) & !is.na(zgpa)) %>% head()
+```
+
+```{r}
+condlist <- list()
+for(i in 1:10) {
+  condlist[[i]] <- min(df_z$zgpa[df_z$decile3 == i], na.rm = TRUE)
+}
+```
+
+```{r}
+condlist
+```
+
+
+
+```{r}
+condlist <- lapply(1:10, function(i) {
+  min(df_z$zgpa[df_z$decile3 == i], na.rm = TRUE)
+}) %>% unlist()
+
+condlist <- lapply(1:10, function(i) {
+  min(df_z$zfygpa[df_z$decile3 == i], na.rm = TRUE)
+}) %>% unlist()
+
+
+thresholds <- data.frame(
+  decile = 9:1,
+  threshold = (condlist[9:1] + condlist[10:2])/2
+)
+
+assign_decile <- function(zgpa_val) {
+  if(is.na(zgpa_val)) return(NA)
+  for(i in 1:nrow(thresholds)) {
+    if(zgpa_val > thresholds$threshold[i]) {
+      return(thresholds$decile[i])
+    }
+  }
+  return(1)
+}
+
+
+df <- df %>%
+  mutate(decile3 = ifelse(is.na(decile3),
+                         sapply(zgpa, assign_decile),
+                         decile3))
+
+```
+
+```{r}
+df_dec <- df %>% select(decile1, zfygpa, decile3, zgpa)
+colSums(is.na(df_dec))
+```
+
+```{r}
+df %>% count(decile1)
+```
+```{r}
+df %>% count(decile3)
+```
+
+```{r}
+ggplot(df, aes(x = factor(decile1, levels = 1:10))) +
+  geom_bar(fill = "steelblue", color = "black") +
+  labs(title = "Distribution of First-Year Law School Decile Ranks",
+       x = "Decile Rank (1 = Bottom 10%, 10 = Top 10%)",
+       y = "Number of Students") +
+  scale_x_discrete(drop = FALSE) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(df, aes(x = factor(decile3, levels = 1:10))) +
+  geom_bar(fill = "steelblue", color = "black") +
+  labs(title = "Distribution of Third-Year Law School (cumulative) Decile Ranks",
+       x = "Decile Rank (1 = Bottom 10%, 10 = Top 10%)",
+       y = "Number of Students") +
+  scale_x_discrete(drop = FALSE) +
+  theme_minimal()
+```
+
+```{r}
+df %>% filter(is.na(decile1)) %>% count()
+df %>% filter(is.na(decile3)) %>% count()
+df %>% filter(is.na(decile1) & is.na(decile3)) %>% count()
+df %>% filter((is.na(decile1) | is.na(decile3)) & pass_bar == 0) %>% count()
+```
+
+Слишком много строк имеют пропуски сразу в decile1 и decile3, а пропуски через zfygpa и zgpa уже были заполнены, так что придется удалить пропущенные значения
+
+```{r}
+df <- df %>% 
+  filter(!(is.na(decile1) & is.na(decile3)))
+```
+
+
+```{r}
+df %>% filter(is.na(decile1) & is.na(decile3)) %>% count()
+```
+```{r}
+df %>% count(decile3)
+```
+Заполним пропуски в decile1 на основе decile3 и обратно
+
+```{r}
+df <- df %>%
+  mutate(
+    decile1 = ifelse(is.na(decile1), decile3, decile1),
+    decile3 = ifelse(is.na(decile3), decile1, decile3)
+  )
+```
+
+
+```{r}
+df <- df %>% select(-zfygpa, -zgpa)
+```
+
+
+
+```{r}
+numeric_df <- df[, sapply(df, is.numeric)]
+
+pass_bar_corr <- cor(numeric_df, use = "complete.obs")["pass_bar", ]
+
+pass_bar_corr[order(-abs(pass_bar_corr))]
+```
+
+```{r}
+colnames(df)
+```
+
+```{r}
+df %>% select('age', 'DOB_yr') %>% head(5)
+```
+
+Интересно, что age имеет отрицательные значения
+
+```{r}
+df_age <- df %>% select(DOB_yr, age, pass_bar)
+
+summary(df_age)
+```
+
+
+```{r}
+corrmat <- cor(df_age, use = "complete.obs")
+ggplot(melt(corrmat), aes(Var1, Var2, fill = value)) + 
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Pearson\nCorrelation") +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 12, hjust = 1)) +
+  coord_fixed()
+
+
+```
+
+
+```{r}
+corrmat[, "pass_bar"]
+```
+
+
+Вроде и есть маленькая корреляция, но значения в age все равно странные. Учитывая, что данные для датасета собирались в 1991-1997 годах, поменяем столбец age на разницу 1991 и DOB_yr, так как DOB_yr представляет собой год рождения (19xx)
+
+```{r}
+df <- df %>%
+  mutate(age = 91 - DOB_yr)
+```
+
+
+```{r}
+df <- df %>% select(-DOB_yr)
+```
+
+```{r}
+df %>% count(age)
+```
+
+cluster
+```{r}
+corrmat_cluster <- cor(df %>% select(cluster, pass_bar), use = "complete.obs")
+ggplot(melt(corrmat_cluster), aes(Var1, Var2, fill = value)) + 
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Pearson\nCorrelation") +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 12, hjust = 1)) +
+  coord_fixed()
+```
+
+```{r}
+corrmat_cluster[, "pass_bar"]
+```
+
+Практически не коррелируется, к тому же в документе нет объяснения значениям, так что удалим
+```{r}
+df <- df %>% select(-cluster)
+```
+
+
+```{r}
+df %>% select(pass_bar, bar1, bar1_yr, bar2, bar2_yr, bar) %>% head(5)
+```
+
+данные столбцы копируют таргет либо говорят о том, с какого раза человек сдал экзамен, что уже нам не нужно
+```{r}
+df <- df %>% select(-bar1, -bar1_yr, -bar2, -bar2_yr, -bar)
+```
+
+```{r}
+colnames(df)
+```
+
+
+```{r}
+df %>% select(tier) %>% head(5)
+```
+
+
+```{r}
+sum(is.na(df$tier))
+
+count(df, tier)
+```
+Посмотрим, сколько процентов с разными значениями tier прошли экзамен
+```{r}
+per_passed_graph <- function(df, value) {
+  df_graph <- df %>%
+    group_by(!!sym(value)) %>%
+    summarise(
+      total = n(),
+      passed = sum(pass_bar == 1, na.rm = TRUE),
+      per_passed = passed / total
+    ) %>%
+    ungroup()
+  
+  ggplot(df_graph, aes(x = as.factor(!!sym(value)), y = per_passed)) +
+    geom_col(fill = "steelblue") +
+    labs(x = value, y = "Percentage Passed") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+
+per_passed_graph(df, 'tier')
+
+```
+
+```{r}
+# Замена пропущенных значений в tier на 3.0
+df$tier[is.na(df$tier)] <- 3.0
+```
+
+```{r}
+colnames(df)
+```
+
+
+```{r}
+count(df, Dropout)
+```
+
+```{r}
+df <- df %>% select(-Dropout)
+```
+
+```{r}
+count(df, grad)
+```
+
+```{r}
+per_passed_graph(df, 'grad')
+```
+
+```{r}
+df$grad[df$grad == ""] <- NA
+df$grad[is.na(df$grad)] <- 'Y'
+df$fulltime[df$fulltime == 2] <- 0
+per_passed_graph(df, 'grad')
+```
+
+```{r}
+df$grad[df$grad == "O"] <- "X"
+```
+
+```{r}
+count(df, fulltime)
+```
+
+фуллтайм = 1 это что человек на фуллтайм обучении, так что для логики поменяем 2 на 0
+```{r}
+df$fulltime[is.na(df$fulltime)] <- 1
+df$grad[df$grad == 2] <- 0
+```
+
+```{r}
+colnames(df)
+```
+
+```{r}
+df <- df %>% select(-dnn_bar_pass_prediction)
+```
+
+```{r}
+count(df, other)
+```
+Никакой информации по столбцу нет в документе или каггле, так что удалим
+```{r}
+df <- df %>% select(-other)
+```
+
+Посмотрим на столбцы индексов
+```{r}
+df %>% select(indxgrp, indxgrp2, index6040) %>% head(10)
+```
+
+```{r}
+indx_df <- df %>% select(indxgrp, indxgrp2, index6040)
+```
+
+```{r}
+count(indx_df, indxgrp)
+count(indx_df, indxgrp2)
+```
+
+https://archive.lawschooltransparency.com/reform/projects/investigations/2015/documents/NLBPS.pdf
+
+изучив данный отчет, я нашел то, что indxgrp представляет собой переведенную по какой-то шкале комбинацию LSAT и undergrad gpa. Стоит пока оставить, но нужно понять, как считаются сами промежутки, чтобы это было понятно пользователю. Посмотрим на значения ugpa
+
+
+```{r}
+df %>% count(ugpa)
+```
+Тут никак не отформатированны значения, в отличие от LSAT, но это уже было рассмотрено.
+
+index6040 вероятнее означает, что lsat весит 60%, а ugpa - 40%. Допустим, пользователь вводит значения ugpa и lsat в нормальных, неотформатированных промежутках.
+
+```{r}
+df %>% filter(index6040 > 500) %>% count(index6040)
+```
+
+```{r}
+df %>% select(ugpa, lsat, index6040) %>% head(10)
+```
+((LSAT - 120)/60)*37 + 11 (округленно) - преобразование lsat
+
+В итоге, index6040 можно считать по формуле 1000 * ( 0.6 * (LSAT - 120)/60 + 0.4 * (ugpa / 4)), где lsat не отформатирован
+
+теперь рассмотрим fam_inc
+```{r}
+income_df <- df %>% select(fam_inc, pass_bar)
+```
+
+```{r}
+count(income_df, fam_inc)
+```
+
+столбец представляет собой социоэкономический статус семьи, разделенный на 5 уровней (5-наивысший). Заполним пропуски 4-м уровнем как самым распространенным
+
+```{r}
+df$fam_inc[is.na(df$fam_inc)] <- 4
+```
+
+```{r}
+colSums(is.na(df))
+```
+
+```{r}
+df <- df %>% filter(!is.na(age))
+```
+
+```{r}
+df <- df %>% select(-ID)
+```
+
+Удалим indxgrp и переименуем indxgrp2, так как в нем немного больше промежутков
+```{r}
+df <- df %>% select(-indxgrp)
+```
+
+```{r}
+df <- df %>% rename(indxgrp = indxgrp2)
+```
+
+
+```{r}
+colSums(is.na(df))
+```
+
+
+Описание оставшихся столбцов:
+
+
+decile3 - кумулятивный дециль в конце третьего (последнего) года обучения. 1 = 10%, 2=11-20% и так далее, где 10 - это топ 10% от рейтинга (то есть 91-100% в топе)
+decile1 - аналогично, но за первый год обучения
+lsat - значения LSAT, отформатированные по формуле ((LSAT - 120)/60)*37 + 11 (округленно)
+ugpa - undergraduate gpa студента
+grad - выпустился ли студент из юридической школы
+fulltime - было ли обучение очным/фуллтайм
+fam_inc - диапазон дохода семьи (допустим 1 = < 30000, 2 = 30000 - 60000, 3 = 60000 - 90000, 4 = 90000 - 120000, 5 = > 120000) в долларах
+age - возраст студента
+gender - пол
+pass_bar - прошел ли студент экзамен (на получение юридической лицензии) - таргет
+tier - уровень юридической школы (1 - топ-уровень), идет до 4-х (ниже среднего), 5 - неизвестные региональные юридические школы, 6 - неаккредитованные программы. Обычно уровень школы можно найти в интернете
+index6040 - композитный индекс по lsat и ugpa с весом 60 у lsat и 40 у ugpa (1000 * ( 0.6 * (LSAT - 120)/60 + 0.4 * (ugpa / 4)), где lsat не отформатирован)
+indxgrp - промежуток index6040
+race1... - раса (1 в одном и 0 в остальных столбцах)
+Как мы видим, таргет сильно не сбалансирован, поэтому на обучении будем балансировать классы.
+На этапе обучения оставляем все переменные
